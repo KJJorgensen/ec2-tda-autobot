@@ -10,7 +10,7 @@ c = auth.client_from_token_file(token_path, api_key)
 fields = c.Account.Fields('positions')
 response = c.get_account(config.account_id, fields = fields)
 r = json.load(response)
-#print(r)
+print(r)
 pos_dict = {}
 for i in r['securitiesAccount']['positions']:
     symbol = i['instrument']['underlyingSymbol']
