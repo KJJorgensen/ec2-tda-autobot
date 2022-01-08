@@ -1,3 +1,10 @@
+"""--------------------------------------------------------------------------------------------------------------------
+Copyright 2022 Kyle Jorgensen
+Licensed under the Apache License, Version 2.0
+THIS CODE IS PROVIDED AS IS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND
+This file is part of the Open Source Library (www.github.com/KJJorgensen)
+--------------------------------------------------------------------------------------------------------------------"""
+
 from tda import auth
 import os
 import time
