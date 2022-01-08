@@ -4,6 +4,7 @@ import os
 import time
 import traceback
 import json
+import math
 import numpy as np
 import pandas as pd
 from sqlalchemy import create_engine
@@ -32,7 +33,7 @@ def login():
         with webdriver.Chrome(r'C:\Users\Owner\Desktop\Projects\tda-autobot\chalicelib\chromedriver.exe') as driver:
             c = auth.client_from_login_flow(
             driver, api_key, redirect_uri, token_path)
-    print(token_path)
+    #print(token_path)
     traceback.print_exc()
     return c
 
@@ -121,15 +122,14 @@ def create_buy_order(c, quantity, filtered_df):
     symbol = filtered_df['symbol'].item()
     ## Used price when order is limit and not market below
     price = ((filtered_df['bid']+filtered_df['ask'])/2).item() # Whatever code you want to use here to set your slippage
-    print("Create Order:", symbol, quantity, price)
+    print("Create BUY TO OPEN Order:", symbol, quantity, price)
     try:
         spec = tda.orders.options.option_buy_to_open_limit(symbol, quantity, price)
         res =  c.place_order(config.account_id, spec)
-        print(spec)#  shows tda build spec location
+        print(spec) # shows tda build spec location
         print("Status:", res.status_code) #HTTP Code
         try:
-            print(res.json())# actual TDA response
-            return res.json()
+            print(res.json()) # actual TDA response
         except:
             pass
         status = 'buy order placed'
@@ -140,15 +140,14 @@ def create_buy_order(c, quantity, filtered_df):
 
 def create_sell_order(c, symbol, quantity, price):
     """Create orders"""
-    print("Create Order:", symbol, quantity, price)
+    print("Create SELL TO CLOSE Order:", symbol, quantity, price)
     try:
         spec = tda.orders.options.option_sell_to_close_limit(symbol, quantity, price)
         res = c.place_order(config.account_id, spec)
-        print(spec)#  shows tda build spec location
+        print(spec) # shows tda build spec location
         print(res.status_code)
         try:
-            print(res.json())# actual TDA response
-            return res.json()
+            print(res.json()) # actual TDA response
         except:
             pass
         status = 'sell order placed'
@@ -167,16 +166,18 @@ def get_positions(c):
         opt_symbol = i['instrument']['symbol']
         close_quantity = i['settledLongQuantity'] + i['settledShortQuantity']
         pos_dict[symbol] = [opt_symbol, close_quantity]
-    print(pos_dict)
+    print("Find Open Position:", pos_dict)
     return pos_dict
 
 def get_sell_price(c, symbol):
     r = c.get_quote(symbol).json()
-    price = (r["bidPrice"] + r["askPrice"])/2 # Whatever code you want to use here to set your slippage
+    slip = ((r[symbol]['bidPrice'] + r[symbol]["askPrice"])/2)
+    price = math.ceil(slip*100)/100 # Whatever code you want to use here to set your slippage
     return price
 
 def order_details(c, ztime):
     try:
+        ztime = ztime - datetime.timedelta(seconds =  1)
         fields = c.Account.Fields('orders')
         response = c.get_account(config.account_id, fields = fields)
         r = json.load(response)
@@ -194,10 +195,10 @@ def order_details(c, ztime):
                     opt_symbol = inst['symbol']
                     usymbol_value = inst['underlyingSymbol']
                     pos[order_id] = [time_value, usymbol_value, effect_value, opt_symbol, quantity, status]
-        print("Entered to db:", usymbol_value, effect_value, opt_symbol, quantity, status)
         if pos is not None:
             orders_df = pd.DataFrame(pos).T.reset_index() # start index at 0
             orders_df.columns = ['order_id', 'datetime', 'underlying', 'effect', 'symbol', 'quantity', 'status']
+            print(orders_df)
             orders_df.to_sql('orders', engine, if_exists='append', index=False, method='multi')
     except KeyError as e:
         if e.args[0] ==  'orderStrategies':
@@ -226,30 +227,29 @@ def main(webhook_message):
         putcall = webhook_message.callput
         dte = webhook_message.dte
 
-        c = login()  # login
+        c = login() # login
         if instruction == "BUY_TO_OPEN":
-            options_df = options_chain(c, uticker, putcall)  # get options chain
-            print("option_df:", options_df.head)    # display option_df
-
+            options_df = options_chain(c, uticker, putcall) # get options chain
+            print("option_df:", options_df.head) # display option_df
             strike_price = get_strikes(options_df, u_price, dte)
-            #strike_price = custom_round(u_price, 0.5)  # get current ATM strike
-
+            #strike_price = custom_round(u_price, 0.5) # get current ATM strike
             filtered_df = filter_options(uticker, options_df, strike_price, putcall, dte)    # filter options chain
-            print("filtered_df:",filtered_df)   # display filtered_df
+            print("filtered_df:",filtered_df) # display filtered_df
             ztime = datetime.datetime.utcnow().replace(tzinfo=tz.UTC)
-            status = create_buy_order(c, quantity, filtered_df)  # place order
+            status = create_buy_order(c, quantity, filtered_df) # place order
             order_details(c, ztime) # add to db
 
-        elif instruction == "SELL_TO_OPEN":
+        elif instruction == "SELL_TO_CLOSE":
             pos_dict = get_positions(c)
             if uticker in pos_dict:
                 symbol = pos_dict[uticker][0]
                 quantity = pos_dict[uticker][1]
                 price = get_sell_price(c, symbol)
                 ztime = datetime.datetime.utcnow().replace(tzinfo=tz.UTC)
-                status = create_sell_order(c, symbol, quantity, price)  # place order
+                status = create_sell_order(c, symbol, quantity, price) # place order
                 order_details(c, ztime) # add to db
-        print("confirm:",status)
+        # time.sleep(5)
+        # print("confirm:",status)
         return 'Make It Rain!'
     except Exception as exc:
         traceback.print_exc()
