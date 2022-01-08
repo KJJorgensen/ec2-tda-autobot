@@ -22,7 +22,7 @@ class webhook_message(BaseModel):
 app = FastAPI()
 
 start = time.time()
-#print(os.path.dirname(os.path.realpath(__file__)), 'chalicelib/ameritrade-credentials.json')
+
 token_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'fastapilib/ameritrade_credentials.json')
 api_key = config.api_key
 c = auth.client_from_token_file(token_path, api_key)
@@ -44,7 +44,7 @@ def option_chain(symbol):
 
 
 @app.post('/option/order')
-async def option_order(webhook_message: webhook_message):
+def option_order(webhook_message: webhook_message):
     print("Webhook Recieved:", webhook_message.dict())
             ##have not been able to test 1st if statement##
     if webhook_message.passphrase not in webhook_message.passphrase:
@@ -60,9 +60,8 @@ async def option_order(webhook_message: webhook_message):
             "message": "Invalid passphrase"
         }
     try:
-        trading_params = trade.main(webhook_message)  # Add this line to push to trade.
+        trading_params = trade.main(webhook_message) # Add this line to push to trade.
         traceback.print_exc()
-        print(trading_params)
         return {
             "status": "success",
             "code": "200",
