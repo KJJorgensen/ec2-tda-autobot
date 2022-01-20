@@ -10,8 +10,8 @@ from datetime import datetime
 import pandas as pd
 import tda
 from tda import auth
-from tda.orders.common import OrderType, first_triggers_second, one_cancels_other
-from tda.orders.options import option_buy_to_open_limit, option_sell_to_close_limit
+from tda.orders.common import OrderType, PriceLinkBasis, PriceLinkType, StopPriceLinkType, first_triggers_second, one_cancels_other
+from tda.orders.options import option_buy_to_open_limit, option_sell_to_close_limit, option_sell_to_close_market
 from . import config
 
 
@@ -115,6 +115,8 @@ def create_buy_order(c, quantity, filtered_df):
     price = ((filtered_df['bid']+filtered_df['ask'])/2).item()
     # Take profit percentage "OCO leg #1, limit order"
     tp_price = "%.2f" % round(price + (price * .20), 2)
+    # Trailing stop offset
+    trailing_stop_price = 5
     # Stop loss percentage "OCO leg #2, limit order"
     sl_price = "%.2f" % round(price - (price * .10), 2)
     # Stop loss activation price for "stop-limit orders"
@@ -124,7 +126,11 @@ def create_buy_order(c, quantity, filtered_df):
     try:
         spec = first_triggers_second(
             option_buy_to_open_limit(symbol, quantity, price),
-                one_cancels_other(option_sell_to_close_limit(symbol, quantity, tp_price)
+                one_cancels_other(option_sell_to_close_market(symbol, quantity)
+                                    .set_order_type(OrderType.TRAILING_STOP)
+                                    .set_stop_price_link_basis(tda.orders.common.StopPriceLinkBasis.MARK)
+                                    .set_stop_price_link_type(StopPriceLinkType.PERCENT)
+                                    .set_stop_price_offset(trailing_stop_price)
                                     .set_duration(tda.orders.common.Duration.GOOD_TILL_CANCEL),
                                   option_sell_to_close_limit(symbol, quantity, sl_price)
                                     .set_duration(tda.orders.common.Duration.GOOD_TILL_CANCEL)
