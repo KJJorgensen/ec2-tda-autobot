@@ -5,27 +5,15 @@ THIS CODE IS PROVIDED AS IS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND
 This file is part of the Open Source Library (www.github.com/KJJorgensen)
 --------------------------------------------------------------------------------------------------------------------"""
 
-import datetime
-from dateutil import tz
 import os
-import time
-import traceback
-import json
-import math
-import numpy as np
+from datetime import datetime
 import pandas as pd
-from sqlalchemy import create_engine
-from sqlalchemy.pool import QueuePool
 import tda
-from pytz import timezone
 from tda import auth
+from tda.orders.common import OrderType, first_triggers_second, one_cancels_other
+from tda.orders.options import option_buy_to_open_limit, option_sell_to_close_limit
 from . import config
 
-
-start = time.time()
-
-engine = create_engine(config.psql, poolclass=QueuePool, pool_size=1, max_overflow=50, pool_recycle=3600,
-                           pool_pre_ping=True, isolation_level='AUTOCOMMIT')# postgres db
 
 ####################################                AUTHENTICATE                 ####################################
 
@@ -42,7 +30,6 @@ def login():
             c = auth.client_from_login_flow(
             driver, api_key, redirect_uri, token_path)
     #print(token_path)
-    traceback.print_exc()
     return c
 
 
@@ -82,7 +69,7 @@ def options_chain(c, symbol,putcall):
         # Convert dictionary to dataframe
         options_df = pd.DataFrame(options_dict)
         options_df = options_df[(options_df['putCall'] == putcall)]  # Call or Put
-        #print("Option Chain:", options_df)
+        #print("Options Chain:", options_df)
         return options_df
 
 
@@ -102,30 +89,12 @@ def get_strikes(df, strike, dte):
 
 ####################################             FILTER OPTION CHAIN             ####################################
 
-
-# def custom_round(x, base=0.5):
-#     """Round to strikes"""
-#     if np.isnan(x):
-#         x = 0
-#     rounded = base * round(float(x) / base)
-#     return rounded
-
-
-# def custom_expiry_date(t):
-#     """Convert string time to expiry time"""
-#     t = t + ' 20:00:00'
-#     expiry_datetime = datetime.datetime.strptime(t, "%Y-%m-%d %H:%M:%S")
-#     expiry_datetime = timezone('UTC').localize(expiry_datetime)
-#     expiry_timestamp = int(datetime.datetime.timestamp(expiry_datetime)) * 1000
-#     return expiry_timestamp
-
-
 def filter_options(symbol, option_df, strike_price, putcall, dte):
     """Filter options to standards"""
-    ## Add filters here or in webhook##
-    #t = '2021-12-05'
-    #expiry_date = custom_expiry_date(t)  # Convert string date to expiry timestamp
-    #dte = 0
+    ## Add variables here or in webhook##
+        #t = '2021-12-05'
+        #expiry_date = custom_expiry_date(t)  # Convert string date to expiry timestamp
+        #dte = 0
     # Apply filters
     filtered_df = option_df[(option_df['daysToExpiration'] <= dte) &    # DTE range
                             (option_df['strikePrice'] == strike_price)]  # Specific Strike Price
@@ -135,26 +104,39 @@ def filter_options(symbol, option_df, strike_price, putcall, dte):
     #print("filtered Chain:", filtered_df)
     return filtered_df
 
-#(option_df['putCall'] == putcall) &  # Call or Put
-# (option_df['daysToExpiration'] >= 3) &    # DTE cutoff
-
 
 ####################################             CREATE/PLACE ORDER              ####################################
 
 def create_buy_order(c, quantity, filtered_df):
-    """Create buy orders"""
+    """Create Order"""
     symbol = filtered_df['symbol'].item()
-    ## Used price when order is limit and not market below
+    ## Used price variable when order is limit and not market below
     # price = Whatever code you want to use here to set your slippage
     price = ((filtered_df['bid']+filtered_df['ask'])/2).item()
+    # Take profit percentage "OCO leg #1, limit order"
+    tp_price = "%.2f" % round(price + (price * .20), 2)
+    # Stop loss percentage "OCO leg #2, limit order"
+    sl_price = "%.2f" % round(price - (price * .10), 2)
+    # Stop loss activation price for "stop-limit orders"
+    stop_price = "%.2f" % round(price - (price * .08), 2)
     print("Create BUY TO OPEN Order:", symbol, quantity, price)
+    #time.sleep(3)
     try:
-        spec = tda.orders.options.option_buy_to_open_limit(symbol, quantity, price)
+        spec = first_triggers_second(
+            option_buy_to_open_limit(symbol, quantity, price),
+                one_cancels_other(option_sell_to_close_limit(symbol, quantity, tp_price)
+                                    .set_duration(tda.orders.common.Duration.GOOD_TILL_CANCEL),
+                                  option_sell_to_close_limit(symbol, quantity, sl_price)
+                                    .set_duration(tda.orders.common.Duration.GOOD_TILL_CANCEL)
+                                    .set_order_type(OrderType.STOP_LIMIT)
+                                    .set_stop_price(stop_price)
+                                    ))
+
         res =  c.place_order(config.account_id, spec)
         # shows tda build spec location
         print(spec)
         # HTTP status Code
-        print("Status:", res.status_code, "--->", datetime.datetime.now())
+        print("Status:", res.status_code, "--->", datetime.now())
         try:
             # Actual TDA response. Not applicable to every order
             print(res.json())
@@ -165,91 +147,6 @@ def create_buy_order(c, quantity, filtered_df):
         print(f'exception in option_order: {str(exc)}')
         status = 'error: '+str(Exception)
     return status
-
-
-def create_sell_order(c, symbol, quantity, price):
-    """Create sell order"""
-    print("Create SELL TO CLOSE Order:", symbol, quantity, price)
-    try:
-        spec = tda.orders.options.option_sell_to_close_limit(symbol, quantity, price)
-        res = c.place_order(config.account_id, spec)
-        # shows tda build spec location
-        print(spec)
-        # HTTP status Code
-        print("Status:", res.status_code, "--->", datetime.datetime.now())
-        try:
-            # Actual TDA response. Not applicable to every order
-            print(res.json())
-        except:
-            pass
-        status = 'Buy order placed'
-    except Exception as exc:
-        print(f'exception in option_order: {str(exc)}')
-        status = 'error: '+str(Exception)
-    return status
-
-####################################               GET POSITIONS                 ####################################
-
-def get_positions(c):
-    """Get open positions"""
-    fields = c.Account.Fields('positions')
-    response = c.get_account(config.account_id, fields = fields)
-    r = json.load(response)
-    pos_dict = {}
-    for i in r['securitiesAccount']['positions']:
-        symbol = i['instrument']['underlyingSymbol']
-        opt_symbol = i['instrument']['symbol']
-        close_quantity = i['settledLongQuantity'] + i['settledShortQuantity']
-        pos_dict[symbol] = [opt_symbol, close_quantity]
-    print("Find Open Position:", pos_dict)
-    return pos_dict
-
-
-####################################              GET SELL PRICE                 ####################################
-
-def get_sell_price(c, symbol):
-    r = c.get_quote(symbol).json()
-    # Price = Whatever code you want to use here to set your slippage
-    slip = ((r[symbol]['bidPrice'] + r[symbol]["askPrice"])/2)
-    price = math.ceil(slip*100)/100
-    #print(price)
-    return price
-
-
-####################################            POSTGRESQL ORDERS DB             ####################################
-
-def order_details(c, ztime):
-    "Parse TDA orders response"
-    try:
-        ztime = ztime - datetime.timedelta(seconds =  1)
-        fields = c.Account.Fields('orders')
-        response = c.get_account(config.account_id, fields = fields)
-        r = json.load(response)
-        # Flatten nested json
-        pos = {}
-        for order_strat in r["securitiesAccount"]['orderStrategies']:
-            order_time = datetime.datetime.strptime(order_strat['enteredTime'], '%Y-%m-%dT%H:%M:%S+0000').replace(tzinfo=tz.UTC)
-            if order_time >= ztime:
-                status = order_strat['status']
-                order_id = order_strat['orderId']
-                time_value = order_time
-                quantity = order_strat["quantity"]
-                for legs in order_strat['orderLegCollection']:
-                    effect_value = legs['positionEffect']
-                    inst = legs['instrument']
-                    opt_symbol = inst['symbol']
-                    usymbol_value = inst['underlyingSymbol']
-                    pos[order_id] = [time_value, usymbol_value, effect_value, opt_symbol, quantity, status]
-        if pos is not None:
-            # Create orders database
-            orders_df = pd.DataFrame(pos).T.reset_index() # start index at 0
-            orders_df.columns = ['order_id', 'datetime', 'underlying', 'effect', 'symbol', 'quantity', 'status']
-            print(orders_df)
-            orders_df.to_sql('orders', engine, if_exists='append', index=False, method='multi')
-    except KeyError as e:
-        if e.args[0] ==  'orderStrategies':
-            print("No Orders")
-    return None
 
 
 ####################################         PASS WEBHOOK TO FUNCTIONS           ####################################
@@ -278,7 +175,7 @@ def main(webhook_message):
         putcall = webhook_message.callput
         dte = webhook_message.dte
 
-        c = login() # login
+        c = login()
         if instruction == "BUY_TO_OPEN":
             options_df = options_chain(c, uticker, putcall) # get options chain
             print("option_df:", options_df.head) # display option_df
@@ -286,26 +183,9 @@ def main(webhook_message):
             #strike_price = custom_round(u_price, 0.5) # get current ATM strike
             filtered_df = filter_options(uticker, options_df, strike_price, putcall, dte)    # filter options chain
             print("filtered_df:",filtered_df) # display filtered_df
-            ztime = datetime.datetime.utcnow().replace(tzinfo=tz.UTC)
             status = create_buy_order(c, quantity, filtered_df) # place order
-            order_details(c, ztime) # add to db
-
-        elif instruction == "SELL_TO_CLOSE":
-            pos_dict = get_positions(c)
-            if uticker in pos_dict:
-                symbol = pos_dict[uticker][0]
-                quantity = pos_dict[uticker][1]
-                price = get_sell_price(c, symbol)
-                ztime = datetime.datetime.utcnow().replace(tzinfo=tz.UTC)
-                status = create_sell_order(c, symbol, quantity, price) # place order
-                order_details(c, ztime) # add to db
         # time.sleep(5)
-        print("confirm:",status)
+        print("confirm:", status)
         return 'Make It Rain!'
     except Exception as exc:
-        traceback.print_exc()
         print(f'Error in main: {str(exc)}')
-
-
-trade_runtime = (time.time() - start)
-print("trade.py runtime:", trade_runtime)
