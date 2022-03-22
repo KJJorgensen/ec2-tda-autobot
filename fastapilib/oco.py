@@ -6,6 +6,7 @@ This file is part of the Open Source Library (www.github.com/KJJorgensen)
 --------------------------------------------------------------------------------------------------------------------"""
 
 import os
+import math
 from datetime import datetime
 import pandas as pd
 import tda
@@ -13,6 +14,8 @@ from tda import auth
 from tda.orders.common import OrderType, PriceLinkBasis, PriceLinkType, StopPriceLinkType, first_triggers_second, one_cancels_other
 from tda.orders.options import option_buy_to_open_limit, option_sell_to_close_limit, option_sell_to_close_market
 from . import config
+from tda.orders.common import Duration, Session
+from tda.orders.common import OrderType
 
 
 ####################################                AUTHENTICATE                 ####################################
@@ -83,8 +86,23 @@ def get_strikes(df, strike, dte):
     df =df.iloc[(df['strikePrice'] - strike).abs().argsort()[:1]]
     df.reset_index(drop=True, inplace=True)
     strike_price = df['strikePrice'][0]
-    #print("Strike:", strike_price)
+    print("Strike:", strike_price)
     return strike_price
+
+
+####################################              Truncation Func.               ####################################
+
+def truncate(number, decimals=0):
+    """Returns a value truncated to a specific number of decimal places.    """
+    if not isinstance(decimals, int):
+        raise TypeError("decimal places must be an integer.")
+    elif decimals < 0:
+        raise ValueError("decimal places has to be 0 or more.")
+    elif decimals == 0:
+        return math.trunc(number)
+
+    factor = 10.0 ** decimals
+    return math.trunc(number * factor) / factor
 
 
 ####################################             FILTER OPTION CHAIN             ####################################
@@ -112,30 +130,27 @@ def create_buy_order(c, quantity, filtered_df):
     symbol = filtered_df['symbol'].item()
     ## Used price variable when order is limit and not market below
     # price = Whatever code you want to use here to set your slippage
-    price = ((filtered_df['bid']+filtered_df['ask'])/2).item()
+    price = truncate(((filtered_df['bid']+filtered_df['ask'])/2).item(),2)
     # Take profit percentage "OCO leg #1, limit order"
-    tp_price = "%.2f" % round(price + (price * .20), 2)
+    tp_price = truncate(price + (price * .40), 2)
     # Trailing stop offset
-    trailing_stop_price = 5
+    #trailing_stop_price = 10
     # Stop loss percentage "OCO leg #2, limit order"
-    sl_price = "%.2f" % round(price - (price * .10), 2)
+    sl_price = truncate(price - (price * .20), 2)
     # Stop loss activation price for "stop-limit orders"
-    stop_price = "%.2f" % round(price - (price * .08), 2)
+    stop_price = truncate(price - (price * .18), 2)
     print("Create BUY TO OPEN Order:", symbol, quantity, price)
+    print("TP:", tp_price, "SL/ST:", sl_price, stop_price)
     #time.sleep(3)
     try:
         spec = first_triggers_second(
             option_buy_to_open_limit(symbol, quantity, price),
-                one_cancels_other(option_sell_to_close_market(symbol, quantity)
-                                    .set_order_type(OrderType.TRAILING_STOP)
-                                    .set_stop_price_link_basis(tda.orders.common.StopPriceLinkBasis.MARK)
-                                    .set_stop_price_link_type(StopPriceLinkType.PERCENT)
-                                    .set_stop_price_offset(trailing_stop_price)
-                                    .set_duration(tda.orders.common.Duration.GOOD_TILL_CANCEL),
+                one_cancels_other(option_sell_to_close_limit(symbol, quantity, tp_price)
+                                  .set_duration(tda.orders.common.Duration.GOOD_TILL_CANCEL),
                                   option_sell_to_close_limit(symbol, quantity, sl_price)
-                                    .set_duration(tda.orders.common.Duration.GOOD_TILL_CANCEL)
                                     .set_order_type(OrderType.STOP_LIMIT)
                                     .set_stop_price(stop_price)
+                                    .set_duration(tda.orders.common.Duration.GOOD_TILL_CANCEL)
                                     ))
 
         res =  c.place_order(config.account_id, spec)
@@ -153,7 +168,6 @@ def create_buy_order(c, quantity, filtered_df):
         print(f'exception in option_order: {str(exc)}')
         status = 'error: '+str(Exception)
     return status
-
 
 ####################################         PASS WEBHOOK TO FUNCTIONS           ####################################
 

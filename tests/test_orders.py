@@ -10,7 +10,7 @@ import os
 import time
 import datetime
 from dateutil import tz
-from fastapilib import config
+from ..fastapilib import config
 from sqlalchemy import create_engine
 from sqlalchemy.pool import QueuePool
 import json

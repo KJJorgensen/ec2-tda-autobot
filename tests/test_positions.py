@@ -7,7 +7,7 @@ This file is part of the Open Source Library (www.github.com/KJJorgensen)
 
 from tda import auth
 import os
-from fastapilib import config
+from ..fastapilib import config
 import json
 
 token_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'ameritrade_credentials.json')

@@ -139,6 +139,21 @@ def filter_options(symbol, option_df, strike_price, putcall, dte):
 # (option_df['daysToExpiration'] >= 3) &    # DTE cutoff
 
 
+####################################              Truncation Func.               ####################################
+
+def truncate(number, decimals=0):
+    """Returns a value truncated to a specific number of decimal places.    """
+    if not isinstance(decimals, int):
+        raise TypeError("decimal places must be an integer.")
+    elif decimals < 0:
+        raise ValueError("decimal places has to be 0 or more.")
+    elif decimals == 0:
+        return math.trunc(number)
+
+    factor = 10.0 ** decimals
+    return math.trunc(number * factor) / factor
+
+
 ####################################             CREATE/PLACE ORDER              ####################################
 
 def create_buy_order(c, quantity, filtered_df):
@@ -146,7 +161,7 @@ def create_buy_order(c, quantity, filtered_df):
     symbol = filtered_df['symbol'].item()
     ## Used price when order is limit and not market below
     # price = Whatever code you want to use here to set your slippage
-    price = ((filtered_df['bid']+filtered_df['ask'])/2).item()
+    price = truncate(((filtered_df['bid']+filtered_df['ask'])/2).item(),2)
     print("Create BUY TO OPEN Order:", symbol, quantity, price)
     try:
         spec = tda.orders.options.option_buy_to_open_limit(symbol, quantity, price)
@@ -210,8 +225,7 @@ def get_positions(c):
 def get_sell_price(c, symbol):
     r = c.get_quote(symbol).json()
     # Price = Whatever code you want to use here to set your slippage
-    slip = ((r[symbol]['bidPrice'] + r[symbol]["askPrice"])/2)
-    price = math.ceil(slip*100)/100
+    price = truncate(((r[symbol]['bidPrice'] + r[symbol]["askPrice"])/2),2)
     #print(price)
     return price
 
@@ -305,6 +319,7 @@ def main(webhook_message):
     except Exception as exc:
         traceback.print_exc()
         print(f'Error in main: {str(exc)}')
+        raise
 
 
 trade_runtime = (time.time() - start)
